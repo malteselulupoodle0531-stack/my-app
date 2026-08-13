@@ -6,9 +6,9 @@ st.set_page_config(
     page_title="フリマ出品データ一括整形ツール", layout="wide"
 )
 
-st.title("📦 フリマ出品データ整形＆出力ツール（新テンプレ対応版）")
+st.title("📦 フリマ出品データ整形＆出力ツール（ノイズ自動除去機能付き）")
 st.caption(
-    "Web版Gemini等の生成結果を貼り付けるだけで、各モール用に文字数チェック＆JSON出力します。"
+    "Web版Gemini等の生成結果を貼り付けるだけで、余計な文字数注記などを自動削除して整形します。"
 )
 
 # サイドバー設定
@@ -60,6 +60,21 @@ MAIN Stream ストライプ 半袖シャツ Sサイズ 赤 白 青
 )
 
 
+# AIが出力に含めてしまいがちな余計な注記（「◯文字以内」「約◯字」など）を消去する関数
+def clean_noise_text(text):
+  if not text:
+    return ""
+  # (◯字以内) や （テンプレート適用・850字以内） などを除去
+  text = re.sub(
+      r"[\(（][^()（）]*?(?:文字|字|テンプレ|適用|以内|約)[^()（）]*?[\)）]",
+      "",
+      text,
+  )
+  # 文末や文頭に残った不要なカッコ類を綺麗にする
+  text = re.sub(r"^\s*[\(（]|[\)）]\s*$", "", text)
+  return text.strip()
+
+
 # 新プロンプトに対応したパース（解析）ロジック
 def parse_ai_text(text):
   data = {
@@ -73,7 +88,7 @@ def parse_ai_text(text):
   if not text:
     return data
 
-  # ①〜⑤の数字や見出しキーワードで柔軟に抽出
+  # ①〜⑤の数字や見出しキーワードで抽出
   title_match = re.search(
       r"(?:①|1|\*)\s*【?(?:商品)?タイトル】?\s*(.*?)(?=\n(?:②|2|\*|【)|$)",
       text,
@@ -101,20 +116,20 @@ def parse_ai_text(text):
   )
 
   if title_match:
-    data["title"] = title_match.group(1).strip()
+    data["title"] = clean_noise_text(title_match.group(1))
   if desc_match:
-    data["description"] = desc_match.group(1).strip()
+    data["description"] = clean_noise_text(desc_match.group(1))
   if price_match:
     price_digits = re.sub(r"\D", "", price_match.group(1))
     data["price"] = price_digits
   if cat_match:
-    data["category"] = cat_match.group(1).strip()
+    data["category"] = clean_noise_text(cat_match.group(1))
   if cond_match:
-    data["condition"] = cond_match.group(1).strip()
+    data["condition"] = clean_noise_text(cond_match.group(1))
 
-  # 万が一抽出できなかった場合のバックアップ（全文から検索）
+  # バックアップ処理
   if not data["description"] and "数あるショップの中から" in text:
-    data["description"] = text.strip()
+    data["description"] = clean_noise_text(text)
 
   return data
 
@@ -122,7 +137,7 @@ def parse_ai_text(text):
 parsed_data = parse_ai_text(raw_text)
 
 st.markdown("---")
-st.subheader("3. ✂️ 整形結果・データ確認")
+st.subheader("3. ✂️ 整形結果・データ確認（余計な文字は自動削除済み）")
 
 if raw_text:
   col_title, col_price = st.columns([3, 1])
@@ -139,7 +154,7 @@ if raw_text:
 
   desc_val = st.text_area("商品説明文", value=parsed_data["description"], height=250)
 
-  # 最新文字数制限チェック（共通60文字想定）
+  # 最新文字数制限チェック
   st.markdown("##### 📏 文字数チェック（タイトル目標: 60文字以内）")
   m_col1, m_col2, m_col3, m_col4 = st.columns(4)
 
