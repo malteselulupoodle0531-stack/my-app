@@ -6,9 +6,9 @@ st.set_page_config(
     page_title="フリマ出品データ一括整形ツール", layout="wide"
 )
 
-st.title("📦 フリマ出品データ整形＆出力ツール（ノイズ自動除去機能付き）")
+st.title("📦 フリマ出品データ整形＆出力ツール（完全修正版）")
 st.caption(
-    "Web版Gemini等の生成結果を貼り付けるだけで、余計な文字数注記などを自動削除して整形します。"
+    "Web版Gemini等の生成結果を貼り付けるだけで、余計な文字を削除し正確にデータを抽出します。"
 )
 
 # サイドバー設定
@@ -50,7 +50,7 @@ MAIN Stream ストライプ 半袖シャツ Sサイズ 赤 白 青
 数あるショップの中から、当ショップをご覧いただき誠にありがとうございます。...
 
 ③【推奨販売価格】
-3500円
+3,500円
 
 ④【カテゴリ】
 メンズ > トップス > シャツ
@@ -60,22 +60,26 @@ MAIN Stream ストライプ 半袖シャツ Sサイズ 赤 白 青
 )
 
 
-# AIが出力に含めてしまいがちな余計な注記（「◯文字以内」「約◯字」など）を消去する関数
+# 不要な文字（(60字以内) や 文頭の「文」など）を除去する強力なクレンジング関数
 def clean_noise_text(text):
   if not text:
     return ""
+  # 文頭に残った「文」や「文：」「：」を消去
+  text = re.sub(r"^\s*文[：:\s]*", "", text)
+  text = re.sub(r"^\s*[：:\s]+", "", text)
+
   # (◯字以内) や （テンプレート適用・850字以内） などを除去
   text = re.sub(
       r"[\(（][^()（）]*?(?:文字|字|テンプレ|適用|以内|約)[^()（）]*?[\)）]",
       "",
       text,
   )
-  # 文末や文頭に残った不要なカッコ類を綺麗にする
+  # 孤立したカッコ類を綺麗にする
   text = re.sub(r"^\s*[\(（]|[\)）]\s*$", "", text)
   return text.strip()
 
 
-# 新プロンプトに対応したパース（解析）ロジック
+# パース（解析）ロジック（柔軟な表記揺れ対応）
 def parse_ai_text(text):
   data = {
       "title": "",
@@ -88,29 +92,34 @@ def parse_ai_text(text):
   if not text:
     return data
 
-  # ①〜⑤の数字や見出しキーワードで抽出
+  # ①〜⑤の見出しに対応する正規表現パターン
+  # タイトル
   title_match = re.search(
-      r"(?:①|1|\*)\s*【?(?:商品)?タイトル】?\s*(.*?)(?=\n(?:②|2|\*|【)|$)",
+      r"(?:①|1|\*)\s*【?(?:商品)?タイトル(?:文)?】?[：:\s]*(.*?)(?=\n(?:②|2|\*|【)|$)",
       text,
       re.S,
   )
+  # 説明文
   desc_match = re.search(
-      r"(?:②|2|\*)\s*【?(?:商品説明|説明文)】?\s*(.*?)(?=\n(?:③|3|\*|【)|$)",
+      r"(?:②|2|\*)\s*【?(?:商品)?説明(?:文)?】?[：:\s]*(.*?)(?=\n(?:③|3|\*|【)|$)",
       text,
       re.S,
   )
+  # 価格（推奨価格、販売価格、平均価格等）
   price_match = re.search(
-      r"(?:③|3|\*)\s*【?(?:推奨販売価格|販売価格|価格)】?\s*(.*?)(?=\n(?:④|4|\*|【)|$)",
+      r"(?:③|3|\*)\s*【?(?:推奨|販売|平均|予想)?(?:販売)?価格】?[：:\s]*(.*?)(?=\n(?:④|4|\*|【)|$)",
       text,
       re.S,
   )
+  # カテゴリ
   cat_match = re.search(
-      r"(?:④|4|\*)\s*【?(?:カテゴリ|カテゴリー)】?\s*(.*?)(?=\n(?:⑤|5|\*|【)|$)",
+      r"(?:④|4|\*)\s*【?(?:販売する際の)?カテゴリ(?:ー)?】?[：:\s]*(.*?)(?=\n(?:⑤|5|\*|【)|$)",
       text,
       re.S,
   )
+  # 状態
   cond_match = re.search(
-      r"(?:⑤|5|\*)\s*【?(?:商品の状態|状態)】?\s*(.*?)(?=\n|\Z)",
+      r"(?:⑤|5|\*)\s*【?(?:商品)?の?状態】?[：:\s]*(.*?)(?=\n|\Z)",
       text,
       re.S,
   )
@@ -120,6 +129,7 @@ def parse_ai_text(text):
   if desc_match:
     data["description"] = clean_noise_text(desc_match.group(1))
   if price_match:
+    # 3,500円 や 3500円 から数字だけを安全に抽出
     price_digits = re.sub(r"\D", "", price_match.group(1))
     data["price"] = price_digits
   if cat_match:
@@ -127,7 +137,7 @@ def parse_ai_text(text):
   if cond_match:
     data["condition"] = clean_noise_text(cond_match.group(1))
 
-  # バックアップ処理
+  # 万が一抽出できなかった場合のバックアップ処理
   if not data["description"] and "数あるショップの中から" in text:
     data["description"] = clean_noise_text(text)
 
@@ -137,7 +147,7 @@ def parse_ai_text(text):
 parsed_data = parse_ai_text(raw_text)
 
 st.markdown("---")
-st.subheader("3. ✂️ 整形結果・データ確認（余計な文字は自動削除済み）")
+st.subheader("3. ✂️ 整形結果・データ確認")
 
 if raw_text:
   col_title, col_price = st.columns([3, 1])
