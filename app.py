@@ -1,12 +1,42 @@
 import streamlit as st
 import google.generativeai as genai
 from PIL import Image
-import io
 
 st.title("フリマ出品文＆画像自動生成アプリ")
 
 # 1. APIキーの設定
 api_key = st.sidebar.text_input("Gemini API Key", type="password")
+
+# APIキーが入力されたら、利用可能なモデル一覧を自動取得する
+available_model_names = []
+if api_key:
+    try:
+        genai.configure(api_key=api_key)
+        # APIからリアルタイムに画像生成（generateContent）に対応したモデル一覧を取得
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                # 'models/' の接頭辞を取り除いてモデル名だけ取得
+                name = m.name.replace('models/', '')
+                available_model_names.append(name)
+        
+        # Flash系を優先して上に来るようにソート
+        available_model_names.sort(key=lambda x: ('flash' not in x, x))
+    except Exception as e:
+        st.sidebar.error("APIキーが無効か、モデル一覧の取得に失敗しました。")
+
+# サイドバーにモデル選択ドロップダウンを動的生成（未来のモデルも勝手にここに入ります）
+if available_model_names:
+    selected_model = st.sidebar.selectbox(
+        "使用するGeminiモデル（自動取得）",
+        available_model_names,
+        index=0
+    )
+else:
+    # 取得失敗時のデフォルト候補
+    selected_model = st.sidebar.selectbox(
+        "使用するGeminiモデル",
+        ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
+    )
 
 # 2. 画像の一括アップロード
 uploaded_files = st.file_uploader(
@@ -15,7 +45,6 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
-images = []
 raw_images = []
 if uploaded_files:
     st.write(f"📷 アップロードされた画像: {len(uploaded_files)}枚")
@@ -26,11 +55,9 @@ if uploaded_files:
         with cols[i % 5]:
             st.image(img, caption=f"画像 {i+1}", use_container_width=True)
 
-# 画像を高速処理用に軽量化（リサイズ＆圧縮）する関数
+# 画像を高速処理用に軽量化（800px）する関数
 def compress_image(image, max_size=800):
-    # アスペクト比を維持して縮小
     image.thumbnail((max_size, max_size))
-    # RGB形式に変換（PNGの透明度対策）
     if image.mode != 'RGB':
         image = image.convert('RGB')
     return image
@@ -102,10 +129,10 @@ if st.button("AIで一括解析＆出品文を生成"):
     elif not platforms:
         st.error("プラットフォームを1つ以上選択してください。")
     else:
-        with st.spinner("画像を軽量化して高速解析中..."):
+        with st.spinner(f"【{selected_model}】で高速解析中..."):
             genai.configure(api_key=api_key)
             
-            # 画像の軽量化処理を実行
+            # 軽量化
             compressed_images = [compress_image(img.copy()) for img in raw_images]
             
             platform_str = ", ".join(platforms)
@@ -135,41 +162,13 @@ if st.button("AIで一括解析＆出品文を生成"):
             ---
             """
 
-            response = None
-            last_error = None
-            
             try:
-                available_models = []
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        available_models.append(m.name)
+                # 選択されたモデルを呼び出し
+                model = genai.GenerativeModel(selected_model)
+                response = model.generate_content([prompt, *compressed_images])
                 
-                # 高速モデル（flash系）を最優先で選択
-                preferred_order = ['flash', 'pro']
-                sorted_models = []
-                for pref in preferred_order:
-                    for model_name in available_models:
-                        if pref in model_name and model_name not in sorted_models:
-                            sorted_models.append(model_name)
-                
-                for model_name in available_models:
-                    if model_name not in sorted_models:
-                        sorted_models.append(model_name)
-
-                for model_name in sorted_models:
-                    try:
-                        model = genai.GenerativeModel(model_name)
-                        response = model.generate_content([prompt, *compressed_images])
-                        break
-                    except Exception as e:
-                        last_error = e
-                        continue
-
-            except Exception as list_err:
-                last_error = list_err
-            
-            if response:
-                st.success("生成が完了しました！")
+                st.success(f"生成が完了しました！（使用モデル: {selected_model}）")
                 st.markdown(response.text)
-            else:
-                st.error(f"モデルの呼び出しに失敗しました: {last_error}")
+                
+            except Exception as e:
+                st.error(f"選択したモデル（{selected_model}）の実行中にエラーが発生しました: {e}")
