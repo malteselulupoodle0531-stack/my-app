@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 from PIL import Image
+import io
 
 st.title("フリマ出品文＆画像自動生成アプリ")
 
@@ -15,14 +16,24 @@ uploaded_files = st.file_uploader(
 )
 
 images = []
+raw_images = []
 if uploaded_files:
     st.write(f"📷 アップロードされた画像: {len(uploaded_files)}枚")
     cols = st.columns(min(len(uploaded_files), 5))
     for i, file in enumerate(uploaded_files):
         img = Image.open(file)
-        images.append(img)
+        raw_images.append(img)
         with cols[i % 5]:
             st.image(img, caption=f"画像 {i+1}", use_container_width=True)
+
+# 画像を高速処理用に軽量化（リサイズ＆圧縮）する関数
+def compress_image(image, max_size=800):
+    # アスペクト比を維持して縮小
+    image.thumbnail((max_size, max_size))
+    # RGB形式に変換（PNGの透明度対策）
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+    return image
 
 st.markdown("---")
 
@@ -86,18 +97,21 @@ st.markdown("---")
 if st.button("AIで一括解析＆出品文を生成"):
     if not api_key:
         st.error("サイドバーにGemini APIキーを入力してください。")
-    elif not images:
+    elif not raw_images:
         st.error("画像を1枚以上アップロードしてください。")
     elif not platforms:
         st.error("プラットフォームを1つ以上選択してください。")
     else:
-        with st.spinner("画像をAI解析中..."):
+        with st.spinner("画像を軽量化して高速解析中..."):
             genai.configure(api_key=api_key)
+            
+            # 画像の軽量化処理を実行
+            compressed_images = [compress_image(img.copy()) for img in raw_images]
             
             platform_str = ", ".join(platforms)
             prompt = f"""
             あなたはプロのフリマ出品者です。
-            添付されたすべての画像（計{len(images)}枚）を総合的に確認し、【{platform_str}】のいずれでも使用できる最適な出品文を作成してください。
+            添付されたすべての画像（計{len(compressed_images)}枚）を総合的に確認し、【{platform_str}】のいずれでも使用できる最適な出品文を作成してください。
 
             【管理番号】: {management_id if management_id else "なし"}
             【指定された実寸値】: {measurements_text}
@@ -125,13 +139,12 @@ if st.button("AIで一括解析＆出品文を生成"):
             last_error = None
             
             try:
-                # 1. APIで利用可能なモデル一覧を取得し、generateContentに対応しているものを自動検索
                 available_models = []
                 for m in genai.list_models():
                     if 'generateContent' in m.supported_generation_methods:
                         available_models.append(m.name)
                 
-                # 2. 優先度が高い順に並び替え（flash系 -> pro系 -> その他）
+                # 高速モデル（flash系）を最優先で選択
                 preferred_order = ['flash', 'pro']
                 sorted_models = []
                 for pref in preferred_order:
@@ -139,16 +152,14 @@ if st.button("AIで一括解析＆出品文を生成"):
                         if pref in model_name and model_name not in sorted_models:
                             sorted_models.append(model_name)
                 
-                # 漏れがあれば残りの対応モデルを追加
                 for model_name in available_models:
                     if model_name not in sorted_models:
                         sorted_models.append(model_name)
 
-                # 3. 自動選択されたモデルで順番に実行テスト
                 for model_name in sorted_models:
                     try:
                         model = genai.GenerativeModel(model_name)
-                        response = model.generate_content([prompt, *images])
+                        response = model.generate_content([prompt, *compressed_images])
                         break
                     except Exception as e:
                         last_error = e
