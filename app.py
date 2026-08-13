@@ -1,144 +1,151 @@
-import io
-import time
-import google.generativeai as genai
-from PIL import Image
 import streamlit as st
+import json
+import re
 
-st.title("フリマ出品文＆画像自動生成アプリ")
+st.set_page_config(page_title="フリマ出品データ一括整形ツール", layout="wide")
 
-# 1. APIキーの設定
-api_key = st.sidebar.text_input("Gemini API Key", type="password")
+st.title("📦 フリマ出品データ整形＆出力ツール（API非依存・爆速版）")
+st.caption("Web版Gemini等の生成結果を貼り付けるだけで、各モール用に文字数調整＆JSON出力します。")
 
-# 使用可能なモデル候補（429上限に達した際に別のモデルへ切り替えられるように設定）
-MODEL_OPTIONS = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-3.6-flash",
-]
-
-selected_model = st.sidebar.selectbox(
-    "使用するGeminiモデル",
-    MODEL_OPTIONS,
-    index=0,  # デフォルトは安定していて上限の緩い gemini-2.0-flash
-    help="1日の利用上限（429エラー）が出た場合は、別のモデルに切り替えて試してください。",
+# サイドバー設定
+st.sidebar.header("⚙️ 設定")
+platforms = st.sidebar.multiselect(
+    "対象プラットフォーム",
+    ["メルカリShops", "ヤフーフリマ/ヤフオク", "ラクマ", "BASE"],
+    default=["メルカリShops", "ヤフーフリマ/ヤフオク", "ラクマ", "BASE"]
 )
 
-# 2. 画像の一括アップロード
-uploaded_files = st.file_uploader(
-    "商品画像をまとめて選択・ドラッグ＆ドロップ（複数OK）",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True,
+# 注意書き（併売用）を自動挿入するか
+add_notice = st.sidebar.checkbox("商品説明文に併売・即決時の免責事項を自動挿入", value=True)
+notice_text = "\n\n※他サイトでも併売しているため、予告なく出品を取り消す場合や、タイミングにより売り切れとなる場合がございます。あらかじめご了承ください。"
+
+# 1. テキスト入力エリア
+st.subheader("1. Web版AIの生成結果を貼り付け")
+raw_text = st.text_area(
+    "GeminiやChatGPTで生成したテキストをそのままペーストしてください",
+    height=200,
+    placeholder="""例：
+【タイトル】
+MAIN Stream ストライプ 半袖シャツ Sサイズ 赤 白 青
+
+【管理番号】
+A-102
+
+【商品の状態】
+目立った傷や汚れなし
+
+【サイズ・実寸（平置き採寸）】
+肩幅: 45cm, 身幅: 50cm, 着丈: 70cm, 袖丈: 22cm
+
+【商品説明文】
+ご覧いただきありがとうございます。MAIN Streamの爽やかなストライプ半袖シャツです。
+
+【推奨価格】
+3,500円
+"""
 )
 
-raw_images = []
-if uploaded_files:
-  st.write(f"📷 アップロードされた画像: {len(uploaded_files)}枚")
-  cols = st.columns(min(len(uploaded_files), 5))
-  for i, file in enumerate(uploaded_files):
-    img = Image.open(file)
-    raw_images.append(img)
-    with cols[i % 5]:
-      st.image(img, caption=f"画像 {i+1}", use_container_width=True)
+# 2. テキストパース（分解）ロジック
+def parse_ai_text(text):
+    data = {
+        "title": "",
+        "management_id": "",
+        "condition": "",
+        "size": "",
+        "description": "",
+        "price": ""
+    }
+    
+    if not text:
+        return data
 
+    # 簡易パース（各項目キーを探して抽出）
+    title_match = re.search(r'【タイトル】\s*(.*?)(?=\n【|\Z)', text, re.S)
+    id_match = re.search(r'【管理番号】\s*(.*?)(?=\n【|\Z)', text, re.S)
+    condition_match = re.search(r'【商品の状態】\s*(.*?)(?=\n【|\Z)', text, re.S)
+    size_match = re.search(r'【サイズ・実寸.*?】\s*(.*?)(?=\n【|\Z)', text, re.S)
+    desc_match = re.search(r'【商品説明文】\s*(.*?)(?=\n【|\Z)', text, re.S)
+    price_match = re.search(r'【推奨価格】\s*(.*?)(?=\n【|\Z)', text, re.S)
 
-# 🚀 画像を高速処理用に軽量化（圧縮）する関数
-def compress_image(image, max_size=800):
-  """画像の長辺をmax_size(標準800px)にリサイズし、JPEGで圧縮する"""
-  image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    if title_match: data["title"] = title_match.group(1).strip()
+    if id_match: data["management_id"] = id_match.group(1).strip()
+    if condition_match: data["condition"] = condition_match.group(1).strip()
+    if size_match: data["size"] = size_match.group(1).strip()
+    if desc_match: data["description"] = desc_match.group(1).strip()
+    if price_match: 
+        # 数字だけを抽出
+        price_digits = re.sub(r'\D', '', price_match.group(1))
+        data["price"] = price_digits
 
-  if image.mode in ("RGBA", "LA", "P"):
-    background = Image.new("RGB", image.size, (255, 255, 255))
-    background.paste(image, mask=image.split()[-1])
-    image = background
-  elif image.mode != "RGB":
-    image = image.convert("RGB")
+    return data
 
-  img_io = io.BytesIO()
-  image.save(img_io, format="JPEG", quality=85)
-  img_io.seek(0)
-  return Image.open(img_io)
-
-
-st.markdown("---")
-
-# 3. 入力フォームエリア
-col_id, col_info = st.columns(2)
-with col_id:
-  management_id = st.text_input("管理番号", placeholder="例: A-102")
-with col_info:
-  measurements_input = st.text_area(
-      "実寸値入力（コピペ可）",
-      placeholder="例:\n肩幅: 45cm\n身幅: 50cm\n着丈: 70cm",
-      height=100,
-  )
+parsed_data = parse_ai_text(raw_text)
 
 st.markdown("---")
+st.subheader("2. モール別整形結果・データ出力")
 
-# 4. AI処理ボタン
-if st.button("AIで出品文を爆速生成"):
-  if not api_key:
-    st.error("サイドバーにGemini APIキーを入力してください。")
-  elif not raw_images:
-    st.error("画像を1枚以上アップロードしてください。")
-  else:
-    with st.spinner(
-        f"画像を自動軽量化して【{selected_model}】で爆速解析中..."
-    ):
-      genai.configure(api_key=api_key)
+if raw_text:
+    # 全体用の商品説明文の組み立て
+    full_description = f"{parsed_data['description']}\n\n【サイズ・実寸】\n{parsed_data['size']}"
+    if parsed_data['management_id']:
+        full_description += f"\n\n【管理番号】\n{parsed_data['management_id']}"
+    if parsed_data['condition']:
+        full_description += f"\n\n【状態】\n{parsed_data['condition']}"
+    if add_notice:
+        full_description += notice_text
 
-      # 画像の軽量化処理
-      compressed_images = [compress_image(img.copy()) for img in raw_images]
+    col_title, col_price = st.columns([3, 1])
+    with col_title:
+        title_val = st.text_input("共通タイトル", value=parsed_data["title"])
+    with col_price:
+        price_val = st.text_input("販売価格 (円)", value=parsed_data["price"])
 
-      prompt = f"""
-            あなたはプロのフリマ出品者です。
-            添付されたすべての画像（計{len(compressed_images)}枚）を総合的に確認し、メルカリShops、ヤフーフリマ、ラクマのいずれでも使用できる最適な出品文を作成してください。
+    desc_val = st.text_area("共通商品説明文", value=full_description, height=200)
 
-            【管理番号】: {management_id if management_id else "なし"}
-            【実寸値情報】: 
-            {measurements_input if measurements_input else "なし（画像から推測して記載してください）"}
+    # モール別文字数チェック
+    st.markdown("##### 📏 モール別文字数制限チェック")
+    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+    
+    title_len = len(title_val)
+    
+    with m_col1:
+        st.caption("メルカリShops (上限40文字)")
+        if title_len > 40:
+            st.error(f"❌ {title_len}文字 (要短縮)")
+        else:
+            st.success(f"⭕ {title_len}/40文字")
 
-            以下のフォーマットで出力してください：
-            ---
-            【タイトル】（40文字以内、検索キーワードやブランド名を効率よく含める）
-            
-            【管理番号】（指定があれば明記）
-            
-            【商品の状態】（画像から推測される状態）
-            
-            【サイズ・実寸（平置き採寸）】
-            （※入力された実寸値はそのまま明記し、記載のない項目で画像から分かる部分があれば補足してください）
-            
-            【商品説明文】
-            （商品の特徴、デザイン、カラー、素材感、活用シーンなどを魅力的に解説。採寸情報や管理番号も箇条書き等で見やすく記載してください）
-            
-            【推奨価格】（相場を踏まえた価格案）
-            ---
-            """
+    with m_col2:
+        st.caption("ヤフーフリマ/ヤフオク (上限65文字)")
+        if title_len > 65:
+            st.error(f"❌ {title_len}文字")
+        else:
+            st.success(f"⭕ {title_len}/65文字")
 
-      max_retries = 3
-      response = None
+    with m_col3:
+        st.caption("ラクマ (上限40文字)")
+        if title_len > 40:
+            st.error(f"❌ {title_len}文字")
+        else:
+            st.success(f"⭕ {title_len}/40文字")
 
-      for attempt in range(max_retries):
-        try:
-          model = genai.GenerativeModel(selected_model)
-          response = model.generate_content([prompt, *compressed_images])
-          break
-        except Exception as e:
-          error_str = str(e)
-          if "429" in error_str:
-            if attempt < max_retries - 1:
-              # 一時的なレート制限なら待機して再試行
-              time.sleep(8)
-            else:
-              st.error(
-                  f"【利用制限エラー (429)】\n選択中のモデル ({selected_model}) の利用回数制限に達しました。"
-                  "\nサイドバーから別のモデル（例: gemini-2.0-flash）に変更して再度お試しください。"
-              )
-              break
-          else:
-            st.error(f"エラーが発生しました: {e}")
-            break
+    with m_col4:
+        st.caption("BASE (上限100文字)")
+        st.success(f"⭕ {title_len}/100文字")
 
-      if response:
-        st.success("生成が完了しました！")
-        st.markdown(response.text)
+    # Chrome拡張機能へ受け渡す用のJSONデータ出力エリア
+    st.markdown("---")
+    st.markdown("### 🚀 Phase 3 (Chrome拡張機能) 連携用データ")
+    
+    export_payload = {
+        "title": title_val,
+        "price": price_val,
+        "description": desc_val,
+        "management_id": parsed_data["management_id"]
+    }
+    
+    json_str = json.dumps(export_payload, ensure_ascii=False)
+    st.text_area("以下のデータをコピーして拡張機能（またはワンクリック転送）で使います", value=json_str, height=70)
+
+else:
+    st.info("上のテキストエリアにWeb版AIの回答を貼り付けると、一瞬で各モール用に整形されます。")
