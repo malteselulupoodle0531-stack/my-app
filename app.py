@@ -27,22 +27,18 @@ if uploaded_files:
 st.markdown("---")
 
 # 3. 入力フォームエリア
-
-# プラットフォームの複数選択
 platforms = st.multiselect(
     "出品先プラットフォーム（複数選択可）",
     ["メルカリShops", "ヤフーフリマ", "ラクマ"],
     default=["メルカリShops", "ヤフーフリマ", "ラクマ"]
 )
 
-# 管理番号・基本補足情報
 col_id, col_info = st.columns(2)
 with col_id:
     management_id = st.text_input("管理番号（任意）", placeholder="例: A-102")
 with col_info:
     product_name = st.text_input("その他・補足情報（任意）", placeholder="例: 新品未使用、箱付き")
 
-# 実寸値（採寸情報）
 st.subheader("📏 実寸値（採寸情報）")
 
 st.markdown("**【トップス類】**")
@@ -95,39 +91,58 @@ if st.button("AIで一括解析＆出品文を生成"):
     elif not platforms:
         st.error("プラットフォームを1つ以上選択してください。")
     else:
-        genai.configure(api_key=api_key)
-        # 最新の推奨モデルに変更
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        
-        platform_str = ", ".join(platforms)
-        
-        prompt = f"""
-        あなたはプロのフリマ出品者です。
-        添付されたすべての画像（計{len(images)}枚）を総合的に確認し、【{platform_str}】のいずれでも使用できる最適な出品文を作成してください。
-
-        【管理番号】: {management_id if management_id else "なし"}
-        【指定された実寸値】: {measurements_text}
-        【その他補足情報】: {product_name if product_name else "なし"}
-
-        以下のフォーマットで出力してください：
-        ---
-        【タイトル】（40文字以内、検索キーワードやブランド名を効率よく含める）
-        
-        【管理番号】（指定があれば明記）
-        
-        【商品の状態】（画像から推測される状態）
-        
-        【サイズ・実寸（平置き採寸）】
-        （※指定された実寸値がある項目はそのまま明記し、記載のない項目で画像から分かる部分があれば補足してください）
-        
-        【商品説明文】
-        （商品の特徴、デザイン、カラー、素材感、活用シーンなどを魅力的に解説。採寸情報や管理番号も箇条書き等で見やすく記載してください）
-        
-        【推奨価格】（相場を踏まえた価格案）
-        ---
-        """
-        
         with st.spinner("画像をAI解析中..."):
-            response = model.generate_content([prompt, *images])
-            st.success("生成が完了しました！")
-            st.markdown(response.text)
+            genai.configure(api_key=api_key)
+            
+            # 使用可能なモデルのリスト（順次自動切り替え）
+            candidate_models = [
+                'gemini-1.5-flash',
+                'gemini-1.5-flash-latest',
+                'gemini-2.0-flash',
+                'gemini-1.5-pro'
+            ]
+            
+            platform_str = ", ".join(platforms)
+            prompt = f"""
+            あなたはプロのフリマ出品者です。
+            添付されたすべての画像（計{len(images)}枚）を総合的に確認し、【{platform_str}】のいずれでも使用できる最適な出品文を作成してください。
+
+            【管理番号】: {management_id if management_id else "なし"}
+            【指定された実寸値】: {measurements_text}
+            【その他補足情報】: {product_name if product_name else "なし"}
+
+            以下のフォーマットで出力してください：
+            ---
+            【タイトル】（40文字以内、検索キーワードやブランド名を効率よく含める）
+            
+            【管理番号】（指定があれば明記）
+            
+            【商品の状態】（画像から推測される状態）
+            
+            【サイズ・実寸（平置き採寸）】
+            （※指定された実寸値がある項目はそのまま明記し、記載のない項目で画像から分かる部分があれば補足してください）
+            
+            【商品説明文】
+            （商品の特徴、デザイン、カラー、素材感、活用シーンなどを魅力的に解説。採寸情報や管理番号も箇条書き等で見やすく記載してください）
+            
+            【推奨価格】（相場を踏まえた価格案）
+            ---
+            """
+
+            response = None
+            last_error = None
+            
+            for model_name in candidate_models:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content([prompt, *images])
+                    break
+                except Exception as e:
+                    last_error = e
+                    continue
+            
+            if response:
+                st.success("生成が完了しました！")
+                st.markdown(response.text)
+            else:
+                st.error(f"モデルの呼び出しに失敗しました: {last_error}")
