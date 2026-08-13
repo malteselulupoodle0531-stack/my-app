@@ -42,7 +42,7 @@ with col_id:
 with col_info:
     product_name = st.text_input("その他・補足情報（任意）", placeholder="例: 新品未使用、箱付き")
 
-# 実寸値（採寸情報）を独立項目としてレイアウト
+# 実寸値（採寸情報）
 st.subheader("📏 実寸値（採寸情報）")
 
 st.markdown("**【トップス類】**")
@@ -69,7 +69,6 @@ with col_b4:
 with col_b5:
     hem = st.text_input("裾幅 (cm)", placeholder="20")
 
-# 入力された採寸項目だけをまとめる処理
 measurements_dict = {
     "着丈": f"{length}cm" if length else None,
     "身幅": f"{width}cm" if width else None,
@@ -82,7 +81,6 @@ measurements_dict = {
     "裾幅": f"{hem}cm" if hem else None,
 }
 
-# 値が入っている項目だけを抽出
 active_measurements = [f"{k}: {v}" for k, v in measurements_dict.items() if v]
 measurements_text = ", ".join(active_measurements) if active_measurements else "なし（画像から推測）"
 
@@ -98,7 +96,8 @@ if st.button("AIで一括解析＆出品文を生成"):
         st.error("プラットフォームを1つ以上選択してください。")
     else:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 最新の推奨モデルに変更
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         platform_str = ", ".join(platforms)
         
