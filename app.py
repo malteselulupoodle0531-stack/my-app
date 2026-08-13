@@ -6,7 +6,7 @@ st.set_page_config(
     page_title="フリマ出品データ一括整形ツール", layout="wide"
 )
 
-st.title("📦 フリマ出品データ整形＆出力ツール（完全修正版）")
+st.title("📦 フリマ出品データ整形＆出力ツール（価格抽出完全修復版）")
 st.caption(
     "Web版Gemini等の生成結果を貼り付けるだけで、余計な文字を削除し正確にデータを抽出します。"
 )
@@ -43,43 +43,27 @@ st.subheader("2. 📝 Web版AIの生成結果を貼り付け")
 raw_text = st.text_area(
     "GeminiやChatGPTで生成された回答（①〜⑤全体）をそのままペーストしてください",
     height=250,
-    placeholder="""①【商品タイトル】
-MAIN Stream ストライプ 半袖シャツ Sサイズ 赤 白 青
-
-②【商品説明】
-数あるショップの中から、当ショップをご覧いただき誠にありがとうございます。...
-
-③【推奨販売価格】
-3,500円
-
-④【カテゴリ】
-メンズ > トップス > シャツ
-
-⑤【商品の状態】
-目立った傷や汚れなし""",
+    placeholder="""ここにAIの出力をそのまま貼り付けます""",
 )
 
 
-# 不要な文字（(60字以内) や 文頭の「文」など）を除去する強力なクレンジング関数
+# 不要な文字（(60字以内) や 文頭の「文」など）を除去するクレンジング関数
 def clean_noise_text(text):
   if not text:
     return ""
-  # 文頭に残った「文」や「文：」「：」を消去
+  # 文頭の「文」や「文：」「：」を消去
   text = re.sub(r"^\s*文[：:\s]*", "", text)
   text = re.sub(r"^\s*[：:\s]+", "", text)
-
   # (◯字以内) や （テンプレート適用・850字以内） などを除去
   text = re.sub(
       r"[\(（][^()（）]*?(?:文字|字|テンプレ|適用|以内|約)[^()（）]*?[\)）]",
       "",
       text,
   )
-  # 孤立したカッコ類を綺麗にする
-  text = re.sub(r"^\s*[\(（]|[\)）]\s*$", "", text)
   return text.strip()
 
 
-# パース（解析）ロジック（柔軟な表記揺れ対応）
+# パース（解析）ロジック（改行・長文見出しに完全対応）
 def parse_ai_text(text):
   data = {
       "title": "",
@@ -92,34 +76,29 @@ def parse_ai_text(text):
   if not text:
     return data
 
-  # ①〜⑤の見出しに対応する正規表現パターン
-  # タイトル
+  # ①〜⑤でブロックごとに分割
   title_match = re.search(
-      r"(?:①|1|\*)\s*【?(?:商品)?タイトル(?:文)?】?[：:\s]*(.*?)(?=\n(?:②|2|\*|【)|$)",
+      r"(?:①|1|\*)\s*【?.*?(?:タイトル|名).*?】?[：:\s]*(.*?)(?=\n(?:②|2|\*|【)|$)",
       text,
       re.S,
   )
-  # 説明文
   desc_match = re.search(
-      r"(?:②|2|\*)\s*【?(?:商品)?説明(?:文)?】?[：:\s]*(.*?)(?=\n(?:③|3|\*|【)|$)",
+      r"(?:②|2|\*)\s*【?.*?(?:商品説明|説明文).*?】?[：:\s]*(.*?)(?=\n(?:③|3|\*|【)|$)",
       text,
       re.S,
   )
-  # 価格（推奨価格、販売価格、平均価格等）
   price_match = re.search(
-      r"(?:③|3|\*)\s*【?(?:推奨|販売|平均|予想)?(?:販売)?価格】?[：:\s]*(.*?)(?=\n(?:④|4|\*|【)|$)",
+      r"(?:③|3|\*)\s*【?.*?(?:価格|金額|値段).*?】?[：:\s]*(.*?)(?=\n(?:④|4|\*|【)|$)",
       text,
       re.S,
   )
-  # カテゴリ
   cat_match = re.search(
-      r"(?:④|4|\*)\s*【?(?:販売する際の)?カテゴリ(?:ー)?】?[：:\s]*(.*?)(?=\n(?:⑤|5|\*|【)|$)",
+      r"(?:④|4|\*)\s*【?.*?(?:カテゴリ).*?】?[：:\s]*(.*?)(?=\n(?:⑤|5|\*|【)|$)",
       text,
       re.S,
   )
-  # 状態
   cond_match = re.search(
-      r"(?:⑤|5|\*)\s*【?(?:商品)?の?状態】?[：:\s]*(.*?)(?=\n|\Z)",
+      r"(?:⑤|5|\*)\s*【?.*?(?:状態).*?】?[：:\s]*(.*?)(?=\n|\Z)",
       text,
       re.S,
   )
@@ -128,18 +107,20 @@ def parse_ai_text(text):
     data["title"] = clean_noise_text(title_match.group(1))
   if desc_match:
     data["description"] = clean_noise_text(desc_match.group(1))
+
+  # 価格ブロック（改行先にある数字を抽出）
   if price_match:
-    # 3,500円 や 3500円 から数字だけを安全に抽出
-    price_digits = re.sub(r"\D", "", price_match.group(1))
-    data["price"] = price_digits
+    price_block = price_match.group(1)
+    # ブロック内の最初の「数字（カンマ含む）」を抽出
+    digits = re.findall(r"\d[\d,]*", price_block)
+    if digits:
+      # カンマを除去して数字だけに統一（例: 3,200 -> 3200）
+      data["price"] = digits[0].replace(",", "")
+
   if cat_match:
     data["category"] = clean_noise_text(cat_match.group(1))
   if cond_match:
     data["condition"] = clean_noise_text(cond_match.group(1))
-
-  # 万が一抽出できなかった場合のバックアップ処理
-  if not data["description"] and "数あるショップの中から" in text:
-    data["description"] = clean_noise_text(text)
 
   return data
 
