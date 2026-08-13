@@ -94,14 +94,6 @@ if st.button("AIで一括解析＆出品文を生成"):
         with st.spinner("画像をAI解析中..."):
             genai.configure(api_key=api_key)
             
-            # 使用可能なモデルのリスト（順次自動切り替え）
-            candidate_models = [
-                'gemini-1.5-flash',
-                'gemini-1.5-flash-latest',
-                'gemini-2.0-flash',
-                'gemini-1.5-pro'
-            ]
-            
             platform_str = ", ".join(platforms)
             prompt = f"""
             あなたはプロのフリマ出品者です。
@@ -132,14 +124,38 @@ if st.button("AIで一括解析＆出品文を生成"):
             response = None
             last_error = None
             
-            for model_name in candidate_models:
-                try:
-                    model = genai.GenerativeModel(model_name)
-                    response = model.generate_content([prompt, *images])
-                    break
-                except Exception as e:
-                    last_error = e
-                    continue
+            try:
+                # 1. APIで利用可能なモデル一覧を取得し、generateContentに対応しているものを自動検索
+                available_models = []
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        available_models.append(m.name)
+                
+                # 2. 優先度が高い順に並び替え（flash系 -> pro系 -> その他）
+                preferred_order = ['flash', 'pro']
+                sorted_models = []
+                for pref in preferred_order:
+                    for model_name in available_models:
+                        if pref in model_name and model_name not in sorted_models:
+                            sorted_models.append(model_name)
+                
+                # 漏れがあれば残りの対応モデルを追加
+                for model_name in available_models:
+                    if model_name not in sorted_models:
+                        sorted_models.append(model_name)
+
+                # 3. 自動選択されたモデルで順番に実行テスト
+                for model_name in sorted_models:
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        response = model.generate_content([prompt, *images])
+                        break
+                    except Exception as e:
+                        last_error = e
+                        continue
+
+            except Exception as list_err:
+                last_error = list_err
             
             if response:
                 st.success("生成が完了しました！")
