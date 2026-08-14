@@ -6,7 +6,7 @@ st.set_page_config(
     page_title="フリマ出品データ一括整形ツール", layout="wide"
 )
 
-st.title("📦 フリマ出品データ整形＆出力ツール（誤抽出防止強化版）")
+st.title("📦 フリマ出品データ整形＆出力ツール（誤抽出完全防止版）")
 st.caption(
     "Web版Gemini等の生成結果を貼り付けるだけで、余計な文字を削除し正確にデータを抽出します。"
 )
@@ -63,7 +63,7 @@ def clean_noise_text(text):
   return text.strip()
 
 
-# パース（解析）ロジック（数字見出し優先で誤判定を完全防止）
+# パース（解析）ロジック（行頭の①〜⑤のみを正確に判定）
 def parse_ai_text(text):
   data = {
       "title": "",
@@ -76,30 +76,39 @@ def parse_ai_text(text):
   if not text:
     return data
 
-  # ①〜⑤の明確な数字＋見出しで厳格にブロック抽出
+  # 前後の改行を整える
+  normalized_text = "\n" + text.strip() + "\n"
+
+  # 行頭（\n）にある ①〜⑤ の見出しマーカーだけで完全にブロック分けする
+  # ① タイトル
   title_match = re.search(
-      r"(?:①|1|\*)\s*【?.*?(?:タイトル|名).*?】?[：:\s]*(.*?)(?=\n\s*(?:②|2|\*|【)|$)",
-      text,
+      r"\n\s*(?:①|1|\*)\s*【?.*?(?:タイトル|名).*?】?[：:\s]*\n?(.*?)(?=\n\s*(?:②|2|\*)\s*【?|\Z)",
+      normalized_text,
       re.S,
   )
+  # ② 商品説明
   desc_match = re.search(
-      r"(?:②|2|\*)\s*【?.*?(?:商品説明|説明文).*?】?[：:\s]*(.*?)(?=\n\s*(?:③|3|\*|【)|$)",
-      text,
+      r"\n\s*(?:②|2|\*)\s*【?.*?(?:商品説明|説明文).*?】?[：:\s]*\n?(.*?)(?=\n\s*(?:③|3|\*)\s*【?|\Z)",
+      normalized_text,
       re.S,
   )
+  # ③ 推奨価格
   price_match = re.search(
-      r"(?:③|3|\*)\s*【?.*?(?:価格|金額|値段).*?】?[：:\s]*(.*?)(?=\n\s*(?:④|4|\*|【)|$)",
-      text,
+      r"\n\s*(?:③|3|\*)\s*【?.*?(?:価格|金額|値段).*?】?[：:\s]*\n?(.*?)(?=\n\s*(?:④|4|\*)\s*【?|\Z)",
+      normalized_text,
       re.S,
   )
+  # ④ カテゴリ
   cat_match = re.search(
-      r"(?:④|4|\*)\s*【?.*?(?:カテゴリ).*?】?[：:\s]*(.*?)(?=\n\s*(?:⑤|5|\*|【)|$)",
-      text,
+      r"\n\s*(?:④|4|\*)\s*【?.*?(?:カテゴリ).*?】?[：:\s]*\n?(.*?)(?=\n\s*(?:⑤|5|\*)\s*【?|\Z)",
+      normalized_text,
       re.S,
   )
-  # ⑤だけは本文中の「〜の状態について〜」に反応しないよう数字（⑤|5）を強く必須化
+  # ⑤ 商品の状態（行頭にある ⑤ や 5 のみ対象）
   cond_match = re.search(
-      r"(?:⑤|5)\s*【?.*?(?:状態).*?】?[：:\s]*(.*?)(?=\n\s*【|$|\Z)", text, re.S
+      r"\n\s*(?:⑤|5)\s*【?.*?(?:状態).*?】?[：:\s]*\n?(.*?)(?=\n\s*【|\Z)",
+      normalized_text,
+      re.S,
   )
 
   if title_match:
@@ -107,7 +116,7 @@ def parse_ai_text(text):
   if desc_match:
     data["description"] = clean_noise_text(desc_match.group(1))
 
-  # 価格ブロック（改行先にある数字を抽出）
+  # 価格ブロック（数字の抽出）
   if price_match:
     price_block = price_match.group(1)
     digits = re.findall(r"\d[\d,]*", price_block)
@@ -116,6 +125,7 @@ def parse_ai_text(text):
 
   if cat_match:
     data["category"] = clean_noise_text(cat_match.group(1))
+
   if cond_match:
     data["condition"] = clean_noise_text(cond_match.group(1))
 
