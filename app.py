@@ -86,33 +86,37 @@ with col_right:
         "AI生成テキスト",
         height=320,
         placeholder="""例:
-管理番号: A-102
-タイトル: 【美品】Nike エアマックス 27cm
-価格: 8500
-状態: 目立った傷や汚れなし
-カテゴリ: メンズ > 靴 > スニーカー
-ブランド: NIKE
-サイズ: 27cm
-
-商品説明:
-履き心地の良いスニーカーです。数回着用の美品です。""",
+【管理番号】
+B642
+【商品タイトル】
+セントジョンズベイ リネンコットン...
+【商品説明】
+数あるショップの中から...
+【価格】
+6800
+【カテゴリ】
+メンズ > トップス > シャツ
+【商品の状態】
+目立った傷や汚れなし""",
     )
 
     if st.button("🪄 貼り付けテキストから各項目へ反映", use_container_width=True):
         if ai_raw_text:
-            # 各単一項目（1行）の抽出パターン
+            text = ai_raw_text.strip()
+
+            # 1. 各項目の抽出（【 】形式および「:」形式の両方に対応）
             patterns = {
-                "management_number": r"管理番号[:：]?\s*(.*)",
-                "title": r"タイトル[:：]?\s*(.*)",
-                "price": r"価格[:：]?\s*(\d+)",
-                "condition": r"(?:状態|商品の状態)[:：]?\s*(.*)",
-                "category": r"カテゴリ[:：]?\s*(.*)",
-                "brand": r"ブランド[:：]?\s*(.*)",
-                "size": r"サイズ[:：]?\s*(.*)",
+                "management_number": r"(?:【管理番号】|管理番号[:：]?)\s*\n?([^\n【]+)",
+                "title": r"(?:【商品タイトル】|タイトル[:：]?)\s*\n?([^\n【]+)",
+                "price": r"(?:【価格】|価格[:：]?)\s*\n?(\d+)",
+                "condition": r"(?:【商品の状態】|【状態】|(?:状態|商品の状態)[:：]?)\s*\n?([^\n【]+)",
+                "category": r"(?:【カテゴリ】|カテゴリ[:：]?)\s*\n?([^\n【]+)",
+                "brand": r"(?:【ブランド】|ブランド[:：]?)\s*\n?([^\n【]+)",
+                "size": r"(?:【サイズ】|サイズ[:：]?)\s*\n?([^\n【]+)",
             }
 
             for key, pat in patterns.items():
-                match = re.search(pat, ai_raw_text)
+                match = re.search(pat, text)
                 if match:
                     val = match.group(1).strip()
                     if key == "price":
@@ -123,18 +127,29 @@ with col_right:
                     else:
                         st.session_state[key] = val
 
-            # 商品説明文の複数行抽出（「商品説明:」〜次の項目またはテキスト末尾まで）
+            # 2. 商品説明文の抽出
+            # 【商品説明】（または商品説明:）から始まり、次の【項目名】の手前までを全取得
             desc_match = re.search(
-                r"商品説明[:：]?\s*\n?(.*?)(?=\n(?:管理番号|タイトル|価格|状態|商品の状態|カテゴリ|ブランド|サイズ)[:：]|\Z)",
-                ai_raw_text,
+                r"(?:【商品説明】|商品説明[:：]?)\s*\n?(.*?)(?=\n【(?:価格|カテゴリ|商品の状態|状態|管理番号|商品タイトル|ブランド|サイズ)】|\Z)",
+                text,
                 re.DOTALL,
             )
 
             if desc_match and desc_match.group(1).strip():
                 st.session_state["description"] = desc_match.group(1).strip()
             else:
-                # 「商品説明:」の見出しが無い場合は全文を入れる（必要に応じて調整）
-                st.session_state["description"] = ai_raw_text.strip()
+                st.session_state["description"] = text
+
+            # 3. 商品説明の中からブランドやサイズが補助取得できる場合の補完処理
+            if not st.session_state["brand"]:
+                brand_in_desc = re.search(r"・ブランド：([^\n]+)", st.session_state["description"])
+                if brand_in_desc:
+                    st.session_state["brand"] = brand_in_desc.group(1).strip()
+
+            if not st.session_state["size"]:
+                size_in_desc = re.search(r"・表記サイズ：([^\n]+)", st.session_state["description"])
+                if size_in_desc:
+                    st.session_state["size"] = size_in_desc.group(1).strip()
 
             st.success("各入力欄へ値を抽出・反映しました！")
             st.rerun()
@@ -188,7 +203,7 @@ st.session_state["title"] = st.text_input(
     "商品タイトル", value=st.session_state["title"]
 )
 st.session_state["description"] = st.text_area(
-    "商品説明文", value=st.session_state["description"], height=180
+    "商品説明文", value=st.session_state["description"], height=250
 )
 
 st.markdown("---")
@@ -218,10 +233,10 @@ else:
             raw_title = st.session_state["title"]
             opt_title = raw_title[:max_len] if len(raw_title) > max_len else raw_title
 
-            # 説明文に管理番号を含める処理
+            # 説明文に管理番号を含める処理（すでに含まれていなければ末尾に付与）
             raw_desc = st.session_state["description"]
             mgmt_num = st.session_state["management_number"]
-            if mgmt_num and "【管理番号】" not in raw_desc:
+            if mgmt_num and f"【管理番号】\n{mgmt_num}" not in raw_desc and f"【管理番号】{mgmt_num}" not in raw_desc:
                 final_desc = f"{raw_desc}\n\n【管理番号】{mgmt_num}"
             else:
                 final_desc = raw_desc
