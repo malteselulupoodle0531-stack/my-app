@@ -92,6 +92,9 @@ B642
 セントジョンズベイ リネンコットン...
 【商品説明】
 数あるショップの中から...
+◆Size
+・表記サイズ：X-LARGE
+...
 【価格】
 6800
 【カテゴリ】
@@ -104,7 +107,7 @@ B642
         if ai_raw_text:
             text = ai_raw_text.strip()
 
-            # 1. 各項目の抽出（【 】形式および「:」形式の両方に対応）
+            # 1. 各項目の抽出パターン
             patterns = {
                 "management_number": r"(?:【管理番号】|管理番号[:：]?)\s*\n?([^\n【]+)",
                 "title": r"(?:【商品タイトル】|タイトル[:：]?)\s*\n?([^\n【]+)",
@@ -112,7 +115,6 @@ B642
                 "condition": r"(?:【商品の状態】|【状態】|(?:状態|商品の状態)[:：]?)\s*\n?([^\n【]+)",
                 "category": r"(?:【カテゴリ】|カテゴリ[:：]?)\s*\n?([^\n【]+)",
                 "brand": r"(?:【ブランド】|ブランド[:：]?)\s*\n?([^\n【]+)",
-                "size": r"(?:【サイズ】|サイズ[:：]?)\s*\n?([^\n【]+)",
             }
 
             for key, pat in patterns.items():
@@ -127,8 +129,7 @@ B642
                     else:
                         st.session_state[key] = val
 
-            # 2. 商品説明文の抽出
-            # 【商品説明】（または商品説明:）から始まり、次の【項目名】の手前までを全取得
+            # 2. 商品説明文の抽出（【商品説明】〜次の【項目名】の手前まで）
             desc_match = re.search(
                 r"(?:【商品説明】|商品説明[:：]?)\s*\n?(.*?)(?=\n【(?:価格|カテゴリ|商品の状態|状態|管理番号|商品タイトル|ブランド|サイズ)】|\Z)",
                 text,
@@ -140,16 +141,18 @@ B642
             else:
                 st.session_state["description"] = text
 
-            # 3. 商品説明の中からブランドやサイズが補助取得できる場合の補完処理
+            # 3. サイズの抽出（「・表記サイズ：」または「表記サイズ:」などを優先取得）
+            size_match = re.search(r"(?:・?\s*表記サイズ[:：]?|【サイズ】|サイズ[:：]?)\s*([^\n【]+)", text)
+            if size_match:
+                st.session_state["size"] = size_match.group(1).strip()
+            else:
+                st.session_state["size"] = ""
+
+            # 4. ブランドの補完抽出（項目欄にない場合「・ブランド：」から取得）
             if not st.session_state["brand"]:
-                brand_in_desc = re.search(r"・ブランド：([^\n]+)", st.session_state["description"])
+                brand_in_desc = re.search(r"・?\s*ブランド[:：]?\s*([^\n]+)", st.session_state["description"])
                 if brand_in_desc:
                     st.session_state["brand"] = brand_in_desc.group(1).strip()
-
-            if not st.session_state["size"]:
-                size_in_desc = re.search(r"・表記サイズ：([^\n]+)", st.session_state["description"])
-                if size_in_desc:
-                    st.session_state["size"] = size_in_desc.group(1).strip()
 
             st.success("各入力欄へ値を抽出・反映しました！")
             st.rerun()
