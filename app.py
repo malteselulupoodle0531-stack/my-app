@@ -266,13 +266,9 @@ else:
             raw_title = st.session_state["title"]
             opt_title = raw_title[:max_len] if len(raw_title) > max_len else raw_title
 
-            # 説明文に管理番号を含める処理（すでに含まれていなければ末尾に付与）
-            raw_desc = st.session_state["description"]
+            # 説明文の整形（自動追加処理を削除し、編集結果をそのまま出力）
+            final_desc = st.session_state["description"]
             mgmt_num = st.session_state["management_number"]
-            if mgmt_num and f"【管理番号】\n{mgmt_num}" not in raw_desc and f"【管理番号】{mgmt_num}" not in raw_desc and f"[ITEM_MGMT]\n{mgmt_num}" not in raw_desc:
-                final_desc = f"{raw_desc}\n\n【管理番号】{mgmt_num}"
-            else:
-                final_desc = raw_desc
 
             site_json_payload = {
                 "site": s_key,
