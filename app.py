@@ -85,74 +85,104 @@ with col_right:
     ai_raw_text = st.text_area(
         "AI生成テキスト",
         height=320,
-        placeholder="""例:
-【管理番号】
+        placeholder="""[ITEM_MGMT]
 B642
-【商品タイトル】
+
+[ITEM_TITLE]
 セントジョンズベイ リネンコットン...
-【商品説明】
+
+[ITEM_DESC_START]
 数あるショップの中から...
-◆Size
-・表記サイズ：X-LARGE
-...
-【価格】
+[ITEM_DESC_END]
+
+[ITEM_PRICE]
 6800
-【カテゴリ】
+
+[ITEM_CAT]
 メンズ > トップス > シャツ
-【商品の状態】
-目立った傷や汚れなし""",
+
+[ITEM_COND]
+目立った傷や汚れなし
+
+[ITEM_SIZE]
+X-LARGE
+
+[ITEM_BRAND]
+ST.JOHN'S BAY""",
     )
 
     if st.button("🪄 貼り付けテキストから各項目へ反映", use_container_width=True):
         if ai_raw_text:
             text = ai_raw_text.strip()
 
-            # 1. 各項目の抽出パターン
-            patterns = {
-                "management_number": r"(?:【管理番号】|管理番号[:：]?)\s*\n?([^\n【]+)",
-                "title": r"(?:【商品タイトル】|タイトル[:：]?)\s*\n?([^\n【]+)",
-                "price": r"(?:【価格】|価格[:：]?)\s*\n?(\d+)",
-                "condition": r"(?:【商品の状態】|【状態】|(?:状態|商品の状態)[:：]?)\s*\n?([^\n【]+)",
-                "category": r"(?:【カテゴリ】|カテゴリ[:：]?)\s*\n?([^\n【]+)",
-                "brand": r"(?:【ブランド】|ブランド[:：]?)\s*\n?([^\n【]+)",
-            }
+            # --- 1. [ITEM_...] 形式での抽出（推奨） ---
+            mgmt_m = re.search(r"\[ITEM_MGMT\]\s*\n?([^\n\[]+)", text)
+            title_m = re.search(r"\[ITEM_TITLE\]\s*\n?([^\n\[]+)", text)
+            price_m = re.search(r"\[ITEM_PRICE\]\s*\n?(\d+)", text)
+            cat_m = re.search(r"\[ITEM_CAT\]\s*\n?([^\n\[]+)", text)
+            cond_m = re.search(r"\[ITEM_COND\]\s*\n?([^\n\[]+)", text)
+            size_m = re.search(r"\[ITEM_SIZE\]\s*\n?([^\n\[]+)", text)
+            brand_m = re.search(r"\[ITEM_BRAND\]\s*\n?([^\n\[]+)", text)
 
-            for key, pat in patterns.items():
-                match = re.search(pat, text)
-                if match:
-                    val = match.group(1).strip()
-                    if key == "price":
-                        try:
-                            st.session_state["price"] = int(val)
-                        except ValueError:
-                            pass
-                    else:
-                        st.session_state[key] = val
+            # 商品説明文（[ITEM_DESC_START]〜[ITEM_DESC_END]）
+            desc_m = re.search(r"\[ITEM_DESC_START\]\s*\n?(.*?)\s*\[ITEM_DESC_END\]", text, re.DOTALL)
 
-            # 2. 商品説明文の抽出（【商品説明】〜次の【項目名】の手前まで）
-            desc_match = re.search(
-                r"(?:【商品説明】|商品説明[:：]?)\s*\n?(.*?)(?=\n【(?:価格|カテゴリ|商品の状態|状態|管理番号|商品タイトル|ブランド|サイズ)】|\Z)",
-                text,
-                re.DOTALL,
-            )
+            # --- 2. 従来の【 】形式でのフォールバック処理 ---
+            if not mgmt_m:
+                mgmt_m = re.search(r"【管理番号】\s*\n?([^\n【]+)", text)
+            if not title_m:
+                title_m = re.search(r"【商品タイトル】\s*\n?([^\n【]+)", text)
+            if not price_m:
+                price_m = re.search(r"【価格】\s*\n?(\d+)", text)
+            if not cat_m:
+                cat_m = re.search(r"【カテゴリ】\s*\n?([^\n【]+)", text)
+            if not cond_m:
+                cond_m = re.search(r"【(?:商品の状態|状態)】\s*\n?([^\n【]+)", text)
 
-            if desc_match and desc_match.group(1).strip():
-                st.session_state["description"] = desc_match.group(1).strip()
+            if not desc_m:
+                # 【商品説明】〜【価格】などの直前までを取得
+                desc_m = re.search(
+                    r"【商品説明】\s*\n?(.*?)(?=\n【(?:価格|カテゴリ|商品の状態|状態|管理番号|商品タイトル)】|\Z)",
+                    text,
+                    re.DOTALL,
+                )
+
+            # --- セッションステートへ反映 ---
+            if mgmt_m:
+                st.session_state["management_number"] = mgmt_m.group(1).strip()
+            if title_m:
+                st.session_state["title"] = title_m.group(1).strip()
+            if price_m:
+                try:
+                    st.session_state["price"] = int(price_m.group(1).strip())
+                except ValueError:
+                    pass
+            if cat_m:
+                st.session_state["category"] = cat_m.group(1).strip()
+            if cond_m:
+                st.session_state["condition"] = cond_m.group(1).strip()
+
+            # 商品説明の設定
+            if desc_m and desc_m.group(1).strip():
+                st.session_state["description"] = desc_m.group(1).strip()
             else:
                 st.session_state["description"] = text
 
-            # 3. サイズの抽出（「・表記サイズ：」または「表記サイズ:」などを優先取得）
-            size_match = re.search(r"(?:・?\s*表記サイズ[:：]?|【サイズ】|サイズ[:：]?)\s*([^\n【]+)", text)
-            if size_match:
-                st.session_state["size"] = size_match.group(1).strip()
+            # サイズ抽出
+            if size_m:
+                st.session_state["size"] = size_m.group(1).strip()
             else:
-                st.session_state["size"] = ""
+                # 本文中の「・表記サイズ：」から補完
+                s_in_desc = re.search(r"・?\s*表記サイズ[:：]?\s*([^\n]+)", st.session_state["description"])
+                st.session_state["size"] = s_in_desc.group(1).strip() if s_in_desc else ""
 
-            # 4. ブランドの補完抽出（項目欄にない場合「・ブランド：」から取得）
-            if not st.session_state["brand"]:
-                brand_in_desc = re.search(r"・?\s*ブランド[:：]?\s*([^\n]+)", st.session_state["description"])
-                if brand_in_desc:
-                    st.session_state["brand"] = brand_in_desc.group(1).strip()
+            # ブランド抽出
+            if brand_m:
+                st.session_state["brand"] = brand_m.group(1).strip()
+            else:
+                # 本文中の「・ブランド：」から補完
+                b_in_desc = re.search(r"・?\s*ブランド[:：]?\s*([^\n]+)", st.session_state["description"])
+                st.session_state["brand"] = b_in_desc.group(1).strip() if b_in_desc else ""
 
             st.success("各入力欄へ値を抽出・反映しました！")
             st.rerun()
@@ -239,7 +269,7 @@ else:
             # 説明文に管理番号を含める処理（すでに含まれていなければ末尾に付与）
             raw_desc = st.session_state["description"]
             mgmt_num = st.session_state["management_number"]
-            if mgmt_num and f"【管理番号】\n{mgmt_num}" not in raw_desc and f"【管理番号】{mgmt_num}" not in raw_desc:
+            if mgmt_num and f"【管理番号】\n{mgmt_num}" not in raw_desc and f"【管理番号】{mgmt_num}" not in raw_desc and f"[ITEM_MGMT]\n{mgmt_num}" not in raw_desc:
                 final_desc = f"{raw_desc}\n\n【管理番号】{mgmt_num}"
             else:
                 final_desc = raw_desc
